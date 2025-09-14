@@ -8,7 +8,6 @@
    * @param {function} onFailure - Callback functie voor falen.
    */
   window.leadtrackrSDK.trackLead = function(payloadString, onSuccess, onFailure) {
-    console.log('LeadTrackr SDK: trackLead function called.');
     var endpoint = 'https://app.leadtrackr.io/api/leads/createLead';
     var headers = {
       'Content-Type': 'application/json'
@@ -17,7 +16,6 @@
 
     try {
         payload = JSON.parse(payloadString);
-        console.log('LeadTrackr SDK: Successfully parsed payload.', payload);
     } catch (e) {
         console.error('LeadTrackr SDK: Failed to parse payload string.', e);
         if (typeof onFailure === 'function') {
@@ -27,16 +25,13 @@
     }
 
     // Gebruik de fetch API om de POST-aanroep te doen
-    console.log('LeadTrackr SDK: Sending POST request to endpoint:', endpoint);
     fetch(endpoint, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(payload)
     })
     .then(function(response) {
-      console.log('LeadTrackr SDK: Received response from API. Status:', response.status);
       if (response.ok) {
-        console.log('LeadTrackr SDK: Lead successfully sent.');
         if (typeof onSuccess === 'function') {
             onSuccess();
         }
