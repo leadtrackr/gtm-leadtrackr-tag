@@ -1,22 +1,53 @@
 (function() {
   window.leadtrackrSDK = window.leadtrackrSDK || {};
 
-  window.leadtrackrSDK.trackLead = function(payload) {
+  /**
+   * Deze functie verstuurt de lead data naar de LeadTrackr API.
+   * @param {string} payloadString - De payload als een JSON-string.
+   * @param {function} onSuccess - Callback functie voor succes.
+   * @param {function} onFailure - Callback functie voor falen.
+   */
+  window.leadtrackrSDK.trackLead = function(payloadString, onSuccess, onFailure) {
     var endpoint = 'https://app.leadtrackr.io/api/leads/createLead';
     var headers = {
       'Content-Type': 'application/json'
     };
+    var payload;
 
-    // Stuur een POST-aanroep met de payload in de body
+    try {
+        payload = JSON.parse(payloadString);
+    } catch (e) {
+        console.error('LeadTrackr SDK: Failed to parse payload string.', e);
+        if (typeof onFailure === 'function') {
+            onFailure();
+        }
+        return;
+    }
+
+    // Gebruik de fetch API om de POST-aanroep te doen
     fetch(endpoint, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(payload)
-    }).then(function(response) {
-      // Optionele logica voor het omgaan met de respons
-      console.log('LeadTrackr API response:', response);
-    }).catch(function(error) {
-      console.error('LeadTrackr API error:', error);
+    })
+    .then(function(response) {
+      if (response.ok) {
+        console.log('LeadTrackr API: Lead successfully sent.');
+        if (typeof onSuccess === 'function') {
+            onSuccess();
+        }
+      } else {
+        console.error('LeadTrackr API: Received a non-ok response.', response.status, response.statusText);
+        if (typeof onFailure === 'function') {
+            onFailure();
+        }
+      }
+    })
+    .catch(function(error) {
+      console.error('LeadTrackr API: Failed to send lead.', error);
+      if (typeof onFailure === 'function') {
+        onFailure();
+      }
     });
   };
 })();
