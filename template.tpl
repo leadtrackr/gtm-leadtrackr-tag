@@ -1,11 +1,3 @@
-﻿___TERMS_OF_SERVICE___
-
-By creating or modifying this file you agree to Google Tag Manager's Community
-Template Gallery Developer Terms of Service available at
-https://developers.google.com/tag-manager/gallery-tos (or such other URL as
-Google may provide), as modified from time to time.
-
-
 ___INFO___
 
 {
@@ -286,163 +278,190 @@ const maxAgeSeconds = 395 * 86400;
 const organicSearchEngines = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com'];
 
 function getDomainFromHost(host) {
-    if (!host) return null;
-    const parts = host.split('.');
-    if (parts.length >= 2) {
-        return parts[parts.length - 2];
-    }
-    return host;
+  if (!host) return null;
+  const parts = host.split('.');
+  if (parts.length >= 2) {
+    return parts[parts.length - 2];
+  }
+  return host;
 }
 
 function getChannelData() {
-    const utmMapping = {
-        source: data.sourceParam || 'utm_source',
-        medium: data.mediumParam || 'utm_medium',
-        campaign: data.campaignParam || 'utm_campaign',
-        content: data.contentParam || 'utm_content',
-        term: data.termParam || 'utm_term',
-    };
-    const utm = {
-        source: getQueryParameters(utmMapping.source) || '',
-        medium: getQueryParameters(utmMapping.medium) || '',
-        campaign: getQueryParameters(utmMapping.campaign) || '',
-        content: getQueryParameters(utmMapping.content) || '',
-        term: getQueryParameters(utmMapping.term) || '',
-    };
-    
-    let referrerHost = null;
-    if (queryPermission('get_referrer', 'host')) {
-        referrerHost = getReferrerUrl('host');
-    }
-    let currentHost = null;
-    if (queryPermission('get_url', 'host')) {
-        currentHost = getUrl('host');
-    }
+  const utmMapping = {
+    source: data.sourceParam || 'utm_source',
+    medium: data.mediumParam || 'utm_medium',
+    campaign: data.campaignParam || 'utm_campaign',
+    content: data.contentParam || 'utm_content',
+    term: data.termParam || 'utm_term',
+  };
+  const utm = {
+    source: getQueryParameters(utmMapping.source) || '',
+    medium: getQueryParameters(utmMapping.medium) || '',
+    campaign: getQueryParameters(utmMapping.campaign) || '',
+    content: getQueryParameters(utmMapping.content) || '',
+    term: getQueryParameters(utmMapping.term) || '',
+  };
+  
+  let referrerHost = null;
+  if (queryPermission('get_referrer', 'host')) {
+    referrerHost = getReferrerUrl('host');
+  }
+  let currentHost = null;
+  if (queryPermission('get_url', 'host')) {
+    currentHost = getUrl('host');
+  }
 
-    let hasAnyUtm = false;
-    for (const key in utm) {
-        if (utm[key]) {
-            hasAnyUtm = true;
-            break;
-        }
+  let hasAnyUtm = false;
+  for (const key in utm) {
+    if (utm[key]) {
+      hasAnyUtm = true;
+      break;
     }
+  }
 
-    if (hasAnyUtm) return utm;
-    if (referrerHost) {
-        for (const engine of organicSearchEngines) {
-            if (referrerHost.indexOf(engine) > -1) {
-                return {
-                    source: getDomainFromHost(referrerHost) || '(not set)',
-                    medium: 'organic'
-                };
-            }
-        }
-        if (currentHost && referrerHost !== currentHost) {
-            return {
-                source: referrerHost || '(not set)',
-                medium: 'referral'
-            };
-        }
+  if (hasAnyUtm) return utm;
+  if (referrerHost) {
+    for (const engine of organicSearchEngines) {
+      if (referrerHost.indexOf(engine) > -1) {
+        return {
+          source: getDomainFromHost(referrerHost) || '(not set)',
+          medium: 'organic'
+        };
+      }
     }
+    if (currentHost && referrerHost !== currentHost) {
+      return {
+        source: referrerHost || '(not set)',
+        medium: 'referral'
+      };
+    }
+  }
 
-    return {
-        source: 'direct',
-        medium: 'none'
-    };
+  return {
+    source: 'direct',
+    medium: 'none'
+  };
 }
 
 function updateChannelFlow() {
-    let currentChannelData = getChannelData();
+  const existingCookie = getCookieValues(cookieName);
+  let channelFlow = [];
+  const cookieValue = (existingCookie && existingCookie.length > 0) ? existingCookie[0] : null;
 
-    const existingCookie = getCookieValues(cookieName);
-    let channelFlow = [];
-    const cookieValue = (existingCookie && existingCookie.length > 0) ? existingCookie[0] : null;
-    if (cookieValue && cookieValue.charAt(0) === '[') {
-        const parsedCookie = JSON.parse(cookieValue);
-        if (parsedCookie) {
-            channelFlow = parsedCookie;
-        } else if (data.isDebug) {
-            logToConsole('Ongeldige JSON in de ChannelFlow cookie. De cookie zal opnieuw worden gezet.');
-        }
+  if (cookieValue && cookieValue.charAt(0) === '[') {
+    const parsedCookie = JSON.parse(cookieValue);
+    if (parsedCookie) {
+      channelFlow = parsedCookie;
+    } else if (data.isDebug) {
+      logToConsole('Ongeldige JSON in de ChannelFlow cookie. De cookie zal opnieuw worden gezet.');
     }
+  }
 
-    const newEntry = {
-        timestamp: getTimestamp(),
-        channel: currentChannelData
-    };
-    const lastEntry = channelFlow[channelFlow.length - 1];
-    const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
-    if (!isSameEntry) {
-        channelFlow.push(newEntry);
+  let currentChannelData;
+  const lastEntry = channelFlow[channelFlow.length - 1];
+  
+  // Controleer op nieuwe UTM-parameters
+  const utmMapping = {
+    source: data.sourceParam || 'utm_source',
+    medium: data.mediumParam || 'utm_medium',
+    campaign: data.campaignParam || 'utm_campaign',
+    content: data.contentParam || 'utm_content',
+    term: data.termParam || 'utm_term',
+  };
+  let hasNewUtmParams = false;
+  for (const key in utmMapping) {
+    if (getQueryParameters(utmMapping[key])) {
+      hasNewUtmParams = true;
+      break;
     }
+  }
+  
+  // Als de cookie al bestaat en er zijn geen nieuwe UTM-parameters,
+  // dan gebruiken we de laatste bekende kanaalgegevens.
+  if (channelFlow.length > 0 && !hasNewUtmParams) {
+    currentChannelData = lastEntry.channel;
+  } else {
+    // Anders, bereken het kanaal opnieuw (eerste bezoek of nieuwe campagne)
+    currentChannelData = getChannelData();
+  }
 
-    setCookie(cookieName, JSON.stringify(channelFlow), {
-        'max-age': maxAgeSeconds,
-        path: '/',
-        domain: 'auto',
-    });
+  const newEntry = {
+    timestamp: getTimestamp(),
+    channel: currentChannelData
+  };
+  
+  const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
+  if (!isSameEntry) {
+    channelFlow.push(newEntry);
+  }
+
+  setCookie(cookieName, JSON.stringify(channelFlow), {
+    'max-age': maxAgeSeconds,
+    path: '/',
+    domain: 'auto',
+  });
 }
 
 function sendLeadData() {
-    const payload = {};
-    payload.projectId = data.projectId;
-    payload.formData = {
-        formName: data.formName || 'undefined form name'
-    };
-    if (data.dedupEnabled && data.uniqueEventId) {
-        payload.formData.uniqueEventId = data.uniqueEventId;
+  const payload = {};
+  payload.projectId = data.projectId;
+  payload.formData = {
+    formName: data.formName || 'undefined form name'
+  };
+  if (data.dedupEnabled && data.uniqueEventId) {
+    payload.formData.uniqueEventId = data.uniqueEventId;
+  }
+
+  payload.userData = {};
+  if (data.userDataFields) {
+    for (let key in data.userDataFields) {
+      payload.userData[data.userDataFields[key].key] = data.userDataFields[key].value;
     }
+  }
 
-    payload.userData = {};
-    if (data.userDataFields) {
-        for (let key in data.userDataFields) {
-            payload.userData[data.userDataFields[key].key] = data.userDataFields[key].value;
-        }
+  if (data.formFieldsData) {
+    payload.formData.formFields = {};
+    for (let key in data.formFieldsData) {
+      payload.formData.formFields[data.formFieldsData[key].key] = data.formFieldsData[key].value;
     }
+  }
 
-    if (data.formFieldsData) {
-        payload.formData.formFields = {};
-        for (let key in data.formFieldsData) {
-            payload.formData.formFields[data.formFieldsData[key].key] = data.formFieldsData[key].value;
-        }
+  let channelFlowCookieValue = getCookieValues(cookieName)[0];
+  if (channelFlowCookieValue && channelFlowCookieValue.charAt(0) === '[') {
+    const parsedCookie = JSON.parse(channelFlowCookieValue);
+    if (parsedCookie) {
+      payload.channelFlow = parsedCookie;
+    } else if (data.isDebug) {
+      logToConsole('Ongeldige JSON in de ChannelFlow cookie bij het versturen van lead data.');
     }
+  }
 
-    let channelFlowCookieValue = getCookieValues(cookieName)[0];
-    if (channelFlowCookieValue && channelFlowCookieValue.charAt(0) === '[') {
-        const parsedCookie = JSON.parse(channelFlowCookieValue);
-        if (parsedCookie) {
-            payload.channelFlow = parsedCookie;
-        } else if (data.isDebug) {
-            logToConsole('Ongeldige JSON in de ChannelFlow cookie bij het versturen van lead data.');
-        }
-    }
+  payload.attributionData = {
+    gclid: getQueryParameters('gclid') || getCookieValues('_gcl_aw')[0] || '',
+    wbraid: getQueryParameters('wbraid') || getCookieValues('_gcl_gb')[0] || '',
+    fbc: getQueryParameters('fbclid') || getCookieValues('_fbc')[0] || '',
+    fbp: getCookieValues('_fbp')[0] || '',
+    cid: getCookieValues('_ga')[0] || ''
+  };
 
-    payload.attributionData = {
-        gclid: getQueryParameters('gclid') || getCookieValues('_gcl_aw')[0] || '',
-        wbraid: getQueryParameters('wbraid') || getCookieValues('_gcl_gb')[0] || '',
-        fbc: getQueryParameters('fbclid') || getCookieValues('_fbc')[0] || '',
-        fbp: getCookieValues('_fbp')[0] || '',
-        cid: getCookieValues('_ga')[0] || '' 
-    };
-
-    // Laad het externe SDK-script dat het POST-verzoek zal afhandelen
-    injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
-        // Roep de functie in het externe script aan met de payload
-        callInWindow('leadtrackrSDK.trackLead', JSON.stringify(payload), data.gtmOnSuccess, data.gtmOnFailure);
-    }, () => {
-        // Bij falen van het laden van het script
-        data.gtmOnFailure();
-    });
+  // Laad het externe SDK-script dat het POST-verzoek zal afhandelen
+  injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
+    // Roep de functie in het externe script aan met de payload
+    callInWindow('leadtrackrSDK.trackLead', JSON.stringify(payload), data.gtmOnSuccess, data.gtmOnFailure);
+  }, () => {
+    // Bij falen van het laden van het script
+    data.gtmOnFailure();
+  });
 }
 
 // Hoofdfunctie van de template
 if (data.tagType === 'pageview') {
-    updateChannelFlow();
-    data.gtmOnSuccess();
+  updateChannelFlow();
+  data.gtmOnSuccess();
 } else if (data.tagType === 'lead') {
-    sendLeadData();
+  sendLeadData();
 } else {
-    data.gtmOnFailure();
+  data.gtmOnFailure();
 }
 
 
@@ -610,6 +629,9 @@ ___WEB_PERMISSIONS___
           }
         }
       ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
     },
     "isRequired": true
   },
