@@ -112,6 +112,16 @@ ___TEMPLATE_PARAMETERS___
     ],
     "subParams": [
       {
+        "type": "SELECT",
+        "name": "userProvidedData",
+        "displayName": "User-Provided Data Object",
+        "macrosInSelect": true,
+        "selectItems": [],
+        "simpleValueType": true,
+        "notSetText": "(not set)",
+        "help": "Provide a User-Provided Data Object to be merged with the fields below.\nIf any properties overlap, the values defined in the table below will override those in your provided object."
+      },
+      {
         "type": "SIMPLE_TABLE",
         "name": "userDataFields",
         "displayName": "",
@@ -267,7 +277,6 @@ ___SANDBOXED_JS_FOR_WEB_TEMPLATE___
 
 /* eslint-env gtm */
 
-// Importeer de benodigde APIs
 const getQueryParameters = require('getQueryParameters');
 const getCookieValues = require('getCookieValues');
 const setCookie = require('setCookie');
@@ -280,16 +289,28 @@ const logToConsole = require('logToConsole');
 const injectScript = require('injectScript');
 const callInWindow = require('callInWindow');
 const encodeUriComponent = require('encodeUriComponent');
+const readAnalyticsStorage = require('readAnalyticsStorage'); 
 
 const cookieName = 'lt_channelflow';
 const maxAgeSeconds = 395 * 86400;
 const organicSearchEngines = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com'];
 
+function getSubDomainIndex() {
+  const hostname = getUrl('hostname');
+  if (!hostname) return 1;
+
+  const parts = hostname.split('.');
+  if (parts.length > 2) {
+    return parts.length - 1;
+  }
+  return 1;
+}
+
 function getDomainFromHost(host) {
   if (!host) return null;
   const parts = host.split('.');
   if (parts.length >= 2) {
-    return parts[parts.length - 2];
+    return parts[parts.length - 2]; 
   }
   return host;
 }
@@ -309,7 +330,7 @@ function getChannelData() {
     content: getQueryParameters(utmMapping.content) || '',
     term: getQueryParameters(utmMapping.term) || '',
   };
-  
+    
   let referrerHost = null;
   if (queryPermission('get_referrer', 'host')) {
     referrerHost = getReferrerUrl('host');
@@ -367,8 +388,7 @@ function updateChannelFlow() {
 
   let currentChannelData;
   const lastEntry = channelFlow[channelFlow.length - 1];
-  
-  // Controleer op nieuwe UTM-parameters
+    
   const utmMapping = {
     source: data.sourceParam || 'utm_source',
     medium: data.mediumParam || 'utm_medium',
@@ -383,13 +403,10 @@ function updateChannelFlow() {
       break;
     }
   }
-  
-  // Als de cookie al bestaat en er zijn geen nieuwe UTM-parameters,
-  // dan gebruiken we de laatste bekende kanaalgegevens.
+    
   if (channelFlow.length > 0 && !hasNewUtmParams) {
     currentChannelData = lastEntry.channel;
   } else {
-    // Anders, bereken het kanaal opnieuw (eerste bezoek of nieuwe campagne)
     currentChannelData = getChannelData();
   }
 
@@ -397,7 +414,7 @@ function updateChannelFlow() {
     timestamp: getTimestamp(),
     channel: currentChannelData
   };
-  
+    
   const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
   if (!isSameEntry) {
     channelFlow.push(newEntry);
@@ -410,6 +427,7 @@ function updateChannelFlow() {
   });
 }
 
+
 function sendLeadData() {
   const payload = {};
   payload.projectId = data.projectId;
@@ -421,6 +439,28 @@ function sendLeadData() {
   }
 
   payload.userData = {};
+  
+  if (data.userProvidedData && typeof data.userProvidedData === 'object') {
+    const upd = data.userProvidedData;
+    
+    if (upd.email) {
+      payload.userData.email = upd.email;
+    }
+    if (upd.phone_number) {
+      payload.userData.phone = upd.phone_number;
+    }
+    
+    if (upd.address && upd.address.length > 0) {
+      const address = upd.address[0];
+      if (address.first_name) {
+        payload.userData.firstName = address.first_name;
+      }
+      if (address.last_name) {
+        payload.userData.lastName = address.last_name;
+      }
+    }
+  }
+
   if (data.userDataFields) {
     for (let key in data.userDataFields) {
       payload.userData[data.userDataFields[key].key] = data.userDataFields[key].value;
@@ -444,25 +484,63 @@ function sendLeadData() {
     }
   }
 
+
+  let gclid = getQueryParameters('gclid');
+  let wbraid = getQueryParameters('wbraid');
+
+  if (!gclid) {
+    const gclAwCookie = getCookieValues('_gcl_aw')[0];
+    gclid = gclAwCookie ? gclAwCookie.split('.')[2] : '';
+  }
+
+  if (!wbraid) {
+    const gclGbCookie = getCookieValues('_gcl_gb')[0];
+    wbraid = gclGbCookie ? gclGbCookie.split('.')[2] : '';
+  }
+
+  let fbc = getCookieValues('_fbc')[0] || '';
+  const fbclid = getQueryParameters('fbclid');
+
+  if (fbclid) {
+    const currentFbcId = fbc.split('.').pop();
+    if (!fbc || (fbc && currentFbcId !== fbclid)) {
+      const subDomainIndex = getSubDomainIndex();
+      const timestamp = getTimestamp();
+      fbc =
+        'fb.' +
+        subDomainIndex +
+        '.' +
+        timestamp +
+        '.' +
+        encodeUriComponent(fbclid);
+    }
+  }
+
+  let fbp = getCookieValues('_fbp')[0] || '';
+
+  let cid = '';
+  if (readAnalyticsStorage) {
+    const analyticsStorageData = readAnalyticsStorage();
+    cid = analyticsStorageData.client_id || '';
+  }
+
+
   payload.attributionData = {
-    gclid: getQueryParameters('gclid') || getCookieValues('_gcl_aw')[0] || '',
-    wbraid: getQueryParameters('wbraid') || getCookieValues('_gcl_gb')[0] || '',
-    fbc: getQueryParameters('fbclid') || getCookieValues('_fbc')[0] || '',
-    fbp: getCookieValues('_fbp')[0] || '',
-    cid: getCookieValues('_ga')[0] || ''
+    fbc: fbc,
+    fbp: fbp,
+    gclid: gclid,
+    wbraid: wbraid,
+    cid: cid
   };
 
-  // Laad het externe SDK-script dat het POST-verzoek zal afhandelen
+
   injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
-    // Roep de functie in het externe script aan met de payload
     callInWindow('leadtrackrSDK.trackLead', JSON.stringify(payload), data.gtmOnSuccess, data.gtmOnFailure);
   }, () => {
-    // Bij falen van het laden van het script
     data.gtmOnFailure();
   });
 }
 
-// Hoofdfunctie van de template
 if (data.tagType === 'pageview') {
   updateChannelFlow();
   data.gtmOnSuccess();
@@ -638,6 +716,9 @@ ___WEB_PERMISSIONS___
         }
       ]
     },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
     "isRequired": true
   },
   {
@@ -763,6 +844,16 @@ ___WEB_PERMISSIONS___
     },
     "clientAnnotations": {
       "isEditedByUser": true
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "read_analytics_storage",
+        "versionId": "1"
+      },
+      "param": []
     },
     "isRequired": true
   }
