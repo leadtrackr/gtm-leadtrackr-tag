@@ -518,6 +518,7 @@ if (data.tagType !== 'lead') {
 
 sendLeadData();
 
+
 ___WEB_PERMISSIONS___
 
 [
@@ -763,6 +764,45 @@ ___WEB_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "leadtrackrSDK.trackLead"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "key"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  },
+                  {
+                    "type": 1,
+                    "string": "execute"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "__ltExecutions"
                   },
                   {
                     "type": 8,
