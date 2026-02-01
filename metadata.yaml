@@ -1,6 +1,8 @@
 homepage: "https://leadtrackr.io"
 documentation: "https://reflective-patio-274.notion.site/Setting-up-a-lead-source-with-GTM-26ecd18e75e180f4b80fe8e19ce26211?pvs=74"
 versions:
+ - sha: 69ce605d4c82f3e864bc7fd69862a39f623e4be3
+    changeNotes: "excluded gtm-msr.appspot.com from leads"
   - sha: 0b96aacd39813a55e133a0079db2488b7b4788f2
     changeNotes: "bugfix params and added upd option"
   - sha: a3d1287d2b452d5d2ae7fefb2f435ca459664be7
