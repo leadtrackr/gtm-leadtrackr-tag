@@ -10,19 +10,19 @@ ___INFO___
 
 {
   "type": "TAG",
-  "id": "cvt_temp_public_id",
+  "id": "cvt_PLF4T",
   "version": 1,
-  "securityGroups": [],
   "displayName": "LeadTracker Tag",
   "brand": {
-    "id": "brand_dummy",
-    "displayName": "LeadTrackr",
+    "id": "github.com_leadtrackr",
+    "displayName": "leadtrackr",
     "thumbnail": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAYAAAA5ZDbSAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAHySURBVHgB7dsxSgNBGEDhf7PRpMwRkht4BUtBIWrjMWwtAgEDlrmCpYUoQsRSr+AJkhuorYkZcwCLERZ2efu+YqppZt4yzcxGSJIkSZLUHkXOpLPFbBmRhqHGeDieZLXrhNAMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBoYzMJyB4QwMZ2C4bs6k/bI8jAZbb7fzlLbjqEiK9NQr9y4DICvw3dHVKhrsdHH9lfUCLVOn6Hw0fc25PKLhDAxnYDgDwxkYzsBwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzBc1oX/xcvNMCpEuUzPNX6cDvr93iAqlLuHWYG/fzbLqNDugxm1KXK3Wx7s9vA1KlOsdsMoZ6ZHNJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBoYzMFzWnw1NV6ZYpaJ4i4qkFO8BgQh8fzKZhv7kEQ1nYDgDwxkYzsBwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeFqufBfbzfz8+fZZ7REijTYDbWoJXBKMY66VtwyHtFwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhst6slMUxW2oMVKK1rxnkyRJkiTpP34BF81FRmRdjK0AAAAASUVORK5CYII\u003d"
   },
   "description": "This tag tracks the customer journey, capturing UTMs and referrer data. It also allows you to send lead data to the Leadtrackr API with custom fields, user data, and channel history.",
   "containerContexts": [
     "WEB"
-  ]
+  ],
+  "securityGroups": []
 }
 
 
@@ -275,6 +275,8 @@ ___TEMPLATE_PARAMETERS___
 
 ___SANDBOXED_JS_FOR_WEB_TEMPLATE___
 
+/* eslint-env gtm */
+
 const getQueryParameters = require('getQueryParameters');
 const getCookieValues = require('getCookieValues');
 const setCookie = require('setCookie');
@@ -287,86 +289,86 @@ const logToConsole = require('logToConsole');
 const injectScript = require('injectScript');
 const callInWindow = require('callInWindow');
 const encodeUriComponent = require('encodeUriComponent');
-const readAnalyticsStorage = require('readAnalyticsStorage');
-const copyFromWindow = require('copyFromWindow');
-const setInWindow = require('setInWindow');
+const readAnalyticsStorage = require('readAnalyticsStorage'); 
+
+let pageLocation = getUrl();
+
+if (
+  pageLocation &&
+  pageLocation.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0
+) {
+  data.gtmOnSuccess();
+
+  return;
+}
 
 const cookieName = 'lt_channelflow';
 const maxAgeSeconds = 395 * 86400;
 const organicSearchEngines = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com'];
 
-function isSdkReady() {
-  const sdk = copyFromWindow('leadtrackrSDK');
-  return !!(sdk && sdk.trackLead);
-}
-
-function isDuplicateExecution() {
-  const executionKey =
-    (data.uniqueEventId || '') + '|' +
-    (data.formName || '') + '|' +
-    getUrl();
-
-  const store = copyFromWindow('__ltExecutions') || {};
-
-  if (store[executionKey]) {
-    if (data.isDebug) {
-      logToConsole('Duplicate LeadTrackr execution blocked', executionKey);
-    }
-    return true;
-  }
-
-  store[executionKey] = true;
-  setInWindow('__ltExecutions', store, true);
-  return false;
-}
-
 function getSubDomainIndex() {
   const hostname = getUrl('hostname');
   if (!hostname) return 1;
+
   const parts = hostname.split('.');
-  return parts.length > 2 ? parts.length - 1 : 1;
+  if (parts.length > 2) {
+    return parts.length - 1;
+  }
+  return 1;
 }
 
 function getDomainFromHost(host) {
   if (!host) return null;
   const parts = host.split('.');
-  return parts.length >= 2 ? parts[parts.length - 2] : host;
+  if (parts.length >= 2) {
+    return parts[parts.length - 2]; 
+  }
+  return host;
 }
 
 function getChannelData() {
-  const utm = {
-    source: getQueryParameters(data.sourceParam || 'utm_source') || '',
-    medium: getQueryParameters(data.mediumParam || 'utm_medium') || '',
-    campaign: getQueryParameters(data.campaignParam || 'utm_campaign') || '',
-    content: getQueryParameters(data.contentParam || 'utm_content') || '',
-    term: getQueryParameters(data.termParam || 'utm_term') || ''
+  const utmMapping = {
+    source: data.sourceParam || 'utm_source',
+    medium: data.mediumParam || 'utm_medium',
+    campaign: data.campaignParam || 'utm_campaign',
+    content: data.contentParam || 'utm_content',
+    term: data.termParam || 'utm_term',
   };
-
-  for (const key in utm) {
-    if (utm[key]) return utm;
-  }
-
+  const utm = {
+    source: getQueryParameters(utmMapping.source) || '',
+    medium: getQueryParameters(utmMapping.medium) || '',
+    campaign: getQueryParameters(utmMapping.campaign) || '',
+    content: getQueryParameters(utmMapping.content) || '',
+    term: getQueryParameters(utmMapping.term) || '',
+  };
+    
   let referrerHost = null;
-  let currentHost = null;
-
   if (queryPermission('get_referrer', 'host')) {
     referrerHost = getReferrerUrl('host');
   }
-
+  let currentHost = null;
   if (queryPermission('get_url', 'host')) {
     currentHost = getUrl('host');
   }
 
+  let hasAnyUtm = false;
+  for (const key in utm) {
+    if (utm[key]) {
+      hasAnyUtm = true;
+      break;
+    }
+  }
+
+  if (hasAnyUtm) return utm;
   if (referrerHost) {
-    for (let i = 0; i < organicSearchEngines.length; i++) {
-      if (referrerHost.indexOf(organicSearchEngines[i]) > -1) {
+    for (const engine of organicSearchEngines) {
+      if (referrerHost.indexOf(engine) > -1) {
         return {
           source: getDomainFromHost(referrerHost) || '(not set)',
           medium: 'organic'
         };
       }
     }
-
     if (currentHost && referrerHost !== currentHost) {
       return {
         source: referrerHost || '(not set)',
@@ -375,148 +377,189 @@ function getChannelData() {
     }
   }
 
-  return { source: 'direct', medium: 'none' };
+  return {
+    source: 'direct',
+    medium: 'none'
+  };
 }
 
 function updateChannelFlow() {
-  const existing = getCookieValues(cookieName);
+  const existingCookie = getCookieValues(cookieName);
   let channelFlow = [];
+  const cookieValue = (existingCookie && existingCookie.length > 0) ? existingCookie[0] : null;
 
-  if (existing && existing[0] && existing[0].charAt(0) === '[') {
-    channelFlow = JSON.parse(existing[0]) || [];
+  if (cookieValue && cookieValue.charAt(0) === '[') {
+    const parsedCookie = JSON.parse(cookieValue);
+    if (parsedCookie) {
+      channelFlow = parsedCookie;
+    } else if (data.isDebug) {
+      logToConsole('Ongeldige JSON in de ChannelFlow cookie. De cookie zal opnieuw worden gezet.');
+    }
+  }
+
+  let currentChannelData;
+  const lastEntry = channelFlow[channelFlow.length - 1];
+    
+  const utmMapping = {
+    source: data.sourceParam || 'utm_source',
+    medium: data.mediumParam || 'utm_medium',
+    campaign: data.campaignParam || 'utm_campaign',
+    content: data.contentParam || 'utm_content',
+    term: data.termParam || 'utm_term',
+  };
+  let hasNewUtmParams = false;
+  for (const key in utmMapping) {
+    if (getQueryParameters(utmMapping[key])) {
+      hasNewUtmParams = true;
+      break;
+    }
+  }
+    
+  if (channelFlow.length > 0 && !hasNewUtmParams) {
+    currentChannelData = lastEntry.channel;
+  } else {
+    currentChannelData = getChannelData();
   }
 
   const newEntry = {
     timestamp: getTimestamp(),
-    channel: getChannelData()
+    channel: currentChannelData
   };
-
-  const last = channelFlow[channelFlow.length - 1];
-  if (!last || JSON.stringify(last.channel) !== JSON.stringify(newEntry.channel)) {
+    
+  const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
+  if (!isSameEntry) {
     channelFlow.push(newEntry);
   }
 
   setCookie(cookieName, JSON.stringify(channelFlow), {
     'max-age': maxAgeSeconds,
     path: '/',
-    domain: 'auto'
+    domain: 'auto',
   });
 }
 
+
 function sendLeadData() {
-
-  if (isDuplicateExecution()) {
-    data.gtmOnFailure();
-    return;
-  }
-
-  const payload = {
-    projectId: data.projectId,
-    formData: {
-      formName: data.formName || 'undefined form name'
-    },
-    userData: {}
+  const payload = {};
+  payload.projectId = data.projectId;
+  payload.formData = {
+    formName: data.formName || 'undefined form name'
   };
-
   if (data.dedupEnabled && data.uniqueEventId) {
     payload.formData.uniqueEventId = data.uniqueEventId;
   }
 
-  if (data.userProvidedData) {
-    const u = data.userProvidedData;
-    if (u.email) payload.userData.email = u.email;
-    if (u.phone_number) payload.userData.phone = u.phone_number;
+  payload.userData = {};
+  
+  if (data.userProvidedData && typeof data.userProvidedData === 'object') {
+    const upd = data.userProvidedData;
+    
+    if (upd.email) {
+      payload.userData.email = upd.email;
+    }
+    if (upd.phone_number) {
+      payload.userData.phone = upd.phone_number;
+    }
+    
+    if (upd.address && upd.address.length > 0) {
+      const address = upd.address[0];
+      if (address.first_name) {
+        payload.userData.firstName = address.first_name;
+      }
+      if (address.last_name) {
+        payload.userData.lastName = address.last_name;
+      }
+    }
+  }
+
+  if (data.userDataFields) {
+    for (let key in data.userDataFields) {
+      payload.userData[data.userDataFields[key].key] = data.userDataFields[key].value;
+    }
   }
 
   if (data.formFieldsData) {
     payload.formData.formFields = {};
-    for (let k in data.formFieldsData) {
-      payload.formData.formFields[data.formFieldsData[k].key] =
-        data.formFieldsData[k].value;
+    for (let key in data.formFieldsData) {
+      payload.formData.formFields[data.formFieldsData[key].key] = data.formFieldsData[key].value;
     }
   }
 
-  const channelFlowCookieValue = getCookieValues(cookieName)[0];
+  let channelFlowCookieValue = getCookieValues(cookieName)[0];
   if (channelFlowCookieValue && channelFlowCookieValue.charAt(0) === '[') {
-    payload.channelFlow = JSON.parse(channelFlowCookieValue);
+    const parsedCookie = JSON.parse(channelFlowCookieValue);
+    if (parsedCookie) {
+      payload.channelFlow = parsedCookie;
+    } else if (data.isDebug) {
+      logToConsole('Ongeldige JSON in de ChannelFlow cookie bij het versturen van lead data.');
+    }
   }
 
-  let gclid = getQueryParameters('gclid') || '';
-  let wbraid = getQueryParameters('wbraid') || '';
+
+  let gclid = getQueryParameters('gclid');
+  let wbraid = getQueryParameters('wbraid');
 
   if (!gclid) {
-    const gclAw = getCookieValues('_gcl_aw')[0];
-    gclid = gclAw ? gclAw.split('.')[2] : '';
+    const gclAwCookie = getCookieValues('_gcl_aw')[0];
+    gclid = gclAwCookie ? gclAwCookie.split('.')[2] : '';
   }
 
   if (!wbraid) {
-    const gclGb = getCookieValues('_gcl_gb')[0];
-    wbraid = gclGb ? gclGb.split('.')[2] : '';
+    const gclGbCookie = getCookieValues('_gcl_gb')[0];
+    wbraid = gclGbCookie ? gclGbCookie.split('.')[2] : '';
   }
 
   let fbc = getCookieValues('_fbc')[0] || '';
   const fbclid = getQueryParameters('fbclid');
 
   if (fbclid) {
-    const timestamp = getTimestamp();
-    const subDomainIndex = getSubDomainIndex();
-    fbc = 'fb.' + subDomainIndex + '.' + timestamp + '.' + encodeUriComponent(fbclid);
+    const currentFbcId = fbc.split('.').pop();
+    if (!fbc || (fbc && currentFbcId !== fbclid)) {
+      const subDomainIndex = getSubDomainIndex();
+      const timestamp = getTimestamp();
+      fbc =
+        'fb.' +
+        subDomainIndex +
+        '.' +
+        timestamp +
+        '.' +
+        encodeUriComponent(fbclid);
+    }
   }
 
-  const fbp = getCookieValues('_fbp')[0] || '';
+  let fbp = getCookieValues('_fbp')[0] || '';
 
   let cid = '';
   if (readAnalyticsStorage) {
-    const ga = readAnalyticsStorage();
-    cid = ga && ga.client_id ? ga.client_id : '';
+    const analyticsStorageData = readAnalyticsStorage();
+    cid = analyticsStorageData.client_id || '';
   }
 
-  const attributionData = {};
-  let hasAttribution = false;
 
-  if (gclid) { attributionData.gclid = gclid; hasAttribution = true; }
-  if (wbraid) { attributionData.wbraid = wbraid; hasAttribution = true; }
-  if (fbc)   { attributionData.fbc   = fbc;   hasAttribution = true; }
-  if (cid)   { attributionData.cid   = cid;   hasAttribution = true; }
-  if (fbp)   { attributionData.fbp   = fbp;   hasAttribution = true; }
+  payload.attributionData = {
+    fbc: fbc,
+    fbp: fbp,
+    gclid: gclid,
+    wbraid: wbraid,
+    cid: cid
+  };
 
-  if (hasAttribution) {
-    payload.attributionData = attributionData;
-  }
 
-  function callTrackLead() {
-    callInWindow(
-      'leadtrackrSDK.trackLead',
-      JSON.stringify(payload),
-      data.gtmOnSuccess,
-      data.gtmOnFailure
-    );
-  }
-
-  if (isSdkReady()) {
-    callTrackLead();
-  } else {
-    injectScript(
-      'https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js',
-      callTrackLead,
-      data.gtmOnFailure
-    );
-  }
+  injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
+    callInWindow('leadtrackrSDK.trackLead', JSON.stringify(payload), data.gtmOnSuccess, data.gtmOnFailure);
+  }, () => {
+    data.gtmOnFailure();
+  });
 }
-
 
 if (data.tagType === 'pageview') {
   updateChannelFlow();
   data.gtmOnSuccess();
-  return;
-}
-
-if (data.tagType !== 'lead') {
+} else if (data.tagType === 'lead') {
+  sendLeadData();
+} else {
   data.gtmOnFailure();
-  return;
 }
-
-sendLeadData();
 
 
 ___WEB_PERMISSIONS___
@@ -778,45 +821,6 @@ ___WEB_PERMISSIONS___
                     "boolean": true
                   }
                 ]
-              },
-              {
-                "type": 3,
-                "mapKey": [
-                  {
-                    "type": 1,
-                    "string": "key"
-                  },
-                  {
-                    "type": 1,
-                    "string": "read"
-                  },
-                  {
-                    "type": 1,
-                    "string": "write"
-                  },
-                  {
-                    "type": 1,
-                    "string": "execute"
-                  }
-                ],
-                "mapValue": [
-                  {
-                    "type": 1,
-                    "string": "__ltExecutions"
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  }
-                ]
               }
             ]
           }
@@ -875,4 +879,3 @@ scenarios: []
 ___NOTES___
 
 Created on 29-8-2025, 13:21:16
-
