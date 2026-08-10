@@ -418,7 +418,7 @@ function updateChannelFlow() {
   }
 
   const existingSession = getCookieValues(sessionCookieName);
-  const hasActiveSession = existingSession && existingSession.length > 0 && existingSession[0];
+  const hasActiveSession = existingSession && existingSession.length > 0;
   const timestamp = getTimestamp();
 
   if (!hasActiveSession) {
@@ -430,7 +430,7 @@ function updateChannelFlow() {
     channelFlow = trimChannelFlow(channelFlow);
   }
 
-  setCookie(sessionCookieName, String(timestamp), {
+  setCookie(sessionCookieName, '1', {
     'max-age': sessionTimeoutSeconds,
     path: '/',
     domain: 'auto'
