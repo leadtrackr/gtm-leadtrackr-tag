@@ -15,8 +15,7 @@ ___INFO___
   "displayName": "LeadTracker Tag",
   "brand": {
     "id": "github.com_leadtrackr",
-    "displayName": "leadtrackr",
-    "thumbnail": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAAB4CAYAAAA5ZDbSAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAHySURBVHgB7dsxSgNBGEDhf7PRpMwRkht4BUtBIWrjMWwtAgEDlrmCpYUoQsRSr+AJkhuorYkZcwCLERZ2efu+YqppZt4yzcxGSJIkSZLUHkXOpLPFbBmRhqHGeDieZLXrhNAMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBoYzMJyB4QwMZ2C4bs6k/bI8jAZbb7fzlLbjqEiK9NQr9y4DICvw3dHVKhrsdHH9lfUCLVOn6Hw0fc25PKLhDAxnYDgDwxkYzsBwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzBc1oX/xcvNMCpEuUzPNX6cDvr93iAqlLuHWYG/fzbLqNDugxm1KXK3Wx7s9vA1KlOsdsMoZ6ZHNJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBoYzMFzWnw1NV6ZYpaJ4i4qkFO8BgQh8fzKZhv7kEQ1nYDgDwxkYzsBwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeFqufBfbzfz8+fZZ7REijTYDbWoJXBKMY66VtwyHtFwBoYzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhst6slMUxW2oMVKK1rxnkyRJkiTpP34BF81FRmRdjK0AAAAASUVORK5CYII\u003d"
+    "displayName": "leadtrackr"
   },
   "description": "This tag tracks the customer journey, capturing UTMs and referrer data. It also allows you to send lead data to the Leadtrackr API with custom fields, user data, and channel history.",
   "containerContexts": [
@@ -289,7 +288,7 @@ const logToConsole = require('logToConsole');
 const injectScript = require('injectScript');
 const callInWindow = require('callInWindow');
 const encodeUriComponent = require('encodeUriComponent');
-const readAnalyticsStorage = require('readAnalyticsStorage'); 
+const readAnalyticsStorage = require('readAnalyticsStorage');
 
 let pageLocation = getUrl();
 
@@ -298,12 +297,14 @@ if (
   pageLocation.lastIndexOf('https://gtm-msr.appspot.com/', 0) === 0
 ) {
   data.gtmOnSuccess();
-
   return;
 }
 
 const cookieName = 'lt_channelflow';
+const sessionCookieName = 'lt_session';
 const maxAgeSeconds = 395 * 86400;
+const sessionTimeoutSeconds = 30 * 60;
+const maxChannelFlowSize = 3000;
 const organicSearchEngines = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com'];
 
 function getSubDomainIndex() {
@@ -321,9 +322,15 @@ function getDomainFromHost(host) {
   if (!host) return null;
   const parts = host.split('.');
   if (parts.length >= 2) {
-    return parts[parts.length - 2]; 
+    return parts[parts.length - 2];
   }
   return host;
+}
+
+function getCurrentPage() {
+  const host = getUrl('host') || '';
+  const path = getUrl('path') || '/';
+  return host + path;
 }
 
 function getChannelData() {
@@ -332,20 +339,21 @@ function getChannelData() {
     medium: data.mediumParam || 'utm_medium',
     campaign: data.campaignParam || 'utm_campaign',
     content: data.contentParam || 'utm_content',
-    term: data.termParam || 'utm_term',
+    term: data.termParam || 'utm_term'
   };
   const utm = {
     source: getQueryParameters(utmMapping.source) || '',
     medium: getQueryParameters(utmMapping.medium) || '',
     campaign: getQueryParameters(utmMapping.campaign) || '',
     content: getQueryParameters(utmMapping.content) || '',
-    term: getQueryParameters(utmMapping.term) || '',
+    term: getQueryParameters(utmMapping.term) || ''
   };
-    
+
   let referrerHost = null;
   if (queryPermission('get_referrer', 'host')) {
     referrerHost = getReferrerUrl('host');
   }
+
   let currentHost = null;
   if (queryPermission('get_url', 'host')) {
     currentHost = getUrl('host');
@@ -360,6 +368,7 @@ function getChannelData() {
   }
 
   if (hasAnyUtm) return utm;
+
   if (referrerHost) {
     for (const engine of organicSearchEngines) {
       if (referrerHost.indexOf(engine) > -1) {
@@ -369,6 +378,7 @@ function getChannelData() {
         };
       }
     }
+
     if (currentHost && referrerHost !== currentHost) {
       return {
         source: referrerHost || '(not set)',
@@ -381,6 +391,16 @@ function getChannelData() {
     source: 'direct',
     medium: 'none'
   };
+}
+
+function trimChannelFlow(channelFlow) {
+  while (
+    channelFlow.length > 1 &&
+    JSON.stringify(channelFlow).length > maxChannelFlowSize
+  ) {
+    channelFlow.shift();
+  }
+  return channelFlow;
 }
 
 function updateChannelFlow() {
@@ -397,47 +417,31 @@ function updateChannelFlow() {
     }
   }
 
-  let currentChannelData;
-  const lastEntry = channelFlow[channelFlow.length - 1];
-    
-  const utmMapping = {
-    source: data.sourceParam || 'utm_source',
-    medium: data.mediumParam || 'utm_medium',
-    campaign: data.campaignParam || 'utm_campaign',
-    content: data.contentParam || 'utm_content',
-    term: data.termParam || 'utm_term',
-  };
-  let hasNewUtmParams = false;
-  for (const key in utmMapping) {
-    if (getQueryParameters(utmMapping[key])) {
-      hasNewUtmParams = true;
-      break;
-    }
-  }
-    
-  if (channelFlow.length > 0 && !hasNewUtmParams) {
-    currentChannelData = lastEntry.channel;
-  } else {
-    currentChannelData = getChannelData();
+  const existingSession = getCookieValues(sessionCookieName);
+  const hasActiveSession = existingSession && existingSession.length > 0 && existingSession[0];
+  const timestamp = getTimestamp();
+
+  if (!hasActiveSession) {
+    channelFlow.push({
+      timestamp: timestamp,
+      landingPage: getCurrentPage(),
+      channel: getChannelData()
+    });
+    channelFlow = trimChannelFlow(channelFlow);
   }
 
-  const newEntry = {
-    timestamp: getTimestamp(),
-    channel: currentChannelData
-  };
-    
-  const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
-  if (!isSameEntry) {
-    channelFlow.push(newEntry);
-  }
+  setCookie(sessionCookieName, String(timestamp), {
+    'max-age': sessionTimeoutSeconds,
+    path: '/',
+    domain: 'auto'
+  });
 
   setCookie(cookieName, JSON.stringify(channelFlow), {
     'max-age': maxAgeSeconds,
     path: '/',
-    domain: 'auto',
+    domain: 'auto'
   });
 }
-
 
 function sendLeadData() {
   const payload = {};
@@ -445,22 +449,23 @@ function sendLeadData() {
   payload.formData = {
     formName: data.formName || 'undefined form name'
   };
+
   if (data.dedupEnabled && data.uniqueEventId) {
     payload.formData.uniqueEventId = data.uniqueEventId;
   }
 
   payload.userData = {};
-  
+
   if (data.userProvidedData && typeof data.userProvidedData === 'object') {
     const upd = data.userProvidedData;
-    
+
     if (upd.email) {
       payload.userData.email = upd.email;
     }
     if (upd.phone_number) {
       payload.userData.phone = upd.phone_number;
     }
-    
+
     if (upd.address && upd.address.length > 0) {
       const address = upd.address[0];
       if (address.first_name) {
@@ -495,6 +500,7 @@ function sendLeadData() {
     }
   }
 
+  payload.conversionPage = getCurrentPage();
 
   let gclid = getQueryParameters('gclid');
   let wbraid = getQueryParameters('wbraid');
@@ -535,7 +541,6 @@ function sendLeadData() {
     cid = analyticsStorageData.client_id || '';
   }
 
-
   payload.attributionData = {
     fbc: fbc,
     fbp: fbp,
@@ -543,7 +548,6 @@ function sendLeadData() {
     wbraid: wbraid,
     cid: cid
   };
-
 
   injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
     callInWindow('leadtrackrSDK.trackLead', JSON.stringify(payload), data.gtmOnSuccess, data.gtmOnFailure);
@@ -601,48 +605,35 @@ ___WEB_PERMISSIONS___
               {
                 "type": 3,
                 "mapKey": [
-                  {
-                    "type": 1,
-                    "string": "name"
-                  },
-                  {
-                    "type": 1,
-                    "string": "domain"
-                  },
-                  {
-                    "type": 1,
-                    "string": "path"
-                  },
-                  {
-                    "type": 1,
-                    "string": "secure"
-                  },
-                  {
-                    "type": 1,
-                    "string": "session"
-                  }
+                  {"type": 1, "string": "name"},
+                  {"type": 1, "string": "domain"},
+                  {"type": 1, "string": "path"},
+                  {"type": 1, "string": "secure"},
+                  {"type": 1, "string": "session"}
                 ],
                 "mapValue": [
-                  {
-                    "type": 1,
-                    "string": "lt_channelflow"
-                  },
-                  {
-                    "type": 1,
-                    "string": "*"
-                  },
-                  {
-                    "type": 1,
-                    "string": "*"
-                  },
-                  {
-                    "type": 1,
-                    "string": "any"
-                  },
-                  {
-                    "type": 1,
-                    "string": "any"
-                  }
+                  {"type": 1, "string": "lt_channelflow"},
+                  {"type": 1, "string": "*"},
+                  {"type": 1, "string": "*"},
+                  {"type": 1, "string": "any"},
+                  {"type": 1, "string": "any"}
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {"type": 1, "string": "name"},
+                  {"type": 1, "string": "domain"},
+                  {"type": 1, "string": "path"},
+                  {"type": 1, "string": "secure"},
+                  {"type": 1, "string": "session"}
+                ],
+                "mapValue": [
+                  {"type": 1, "string": "lt_session"},
+                  {"type": 1, "string": "*"},
+                  {"type": 1, "string": "*"},
+                  {"type": 1, "string": "any"},
+                  {"type": 1, "string": "any"}
                 ]
               }
             ]
@@ -747,79 +738,31 @@ ___WEB_PERMISSIONS___
               {
                 "type": 3,
                 "mapKey": [
-                  {
-                    "type": 1,
-                    "string": "key"
-                  },
-                  {
-                    "type": 1,
-                    "string": "read"
-                  },
-                  {
-                    "type": 1,
-                    "string": "write"
-                  },
-                  {
-                    "type": 1,
-                    "string": "execute"
-                  }
+                  {"type": 1, "string": "key"},
+                  {"type": 1, "string": "read"},
+                  {"type": 1, "string": "write"},
+                  {"type": 1, "string": "execute"}
                 ],
                 "mapValue": [
-                  {
-                    "type": 1,
-                    "string": "leadtrackrSDK"
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  }
+                  {"type": 1, "string": "leadtrackrSDK"},
+                  {"type": 8, "boolean": true},
+                  {"type": 8, "boolean": true},
+                  {"type": 8, "boolean": true}
                 ]
               },
               {
                 "type": 3,
                 "mapKey": [
-                  {
-                    "type": 1,
-                    "string": "key"
-                  },
-                  {
-                    "type": 1,
-                    "string": "read"
-                  },
-                  {
-                    "type": 1,
-                    "string": "write"
-                  },
-                  {
-                    "type": 1,
-                    "string": "execute"
-                  }
+                  {"type": 1, "string": "key"},
+                  {"type": 1, "string": "read"},
+                  {"type": 1, "string": "write"},
+                  {"type": 1, "string": "execute"}
                 ],
                 "mapValue": [
-                  {
-                    "type": 1,
-                    "string": "leadtrackrSDK.trackLead"
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  },
-                  {
-                    "type": 8,
-                    "boolean": true
-                  }
+                  {"type": 1, "string": "leadtrackrSDK.trackLead"},
+                  {"type": 8, "boolean": true},
+                  {"type": 8, "boolean": true},
+                  {"type": 8, "boolean": true}
                 ]
               }
             ]
