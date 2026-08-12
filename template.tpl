@@ -201,6 +201,26 @@ ___TEMPLATE_PARAMETERS___
     ]
   },
   {
+    "type": "TEXT",
+    "name": "sessionTimeoutMinutes",
+    "displayName": "Session Timeout (minutes)",
+    "simpleValueType": true,
+    "defaultValue": 30,
+    "valueValidators": [
+      {
+        "type": "POSITIVE_NUMBER"
+      }
+    ],
+    "enablingConditions": [
+      {
+        "paramName": "tagType",
+        "paramValue": "pageview",
+        "type": "EQUALS"
+      }
+    ],
+    "help": "A new Channel Flow entry is recorded when this many minutes pass without a pageview. Matches the GA4 default of 30 minutes."
+  },
+  {
     "type": "CHECKBOX",
     "name": "enableCustomUtm",
     "checkboxText": "Use Custom UTM Parameters",
@@ -289,7 +309,9 @@ const logToConsole = require('logToConsole');
 const injectScript = require('injectScript');
 const callInWindow = require('callInWindow');
 const encodeUriComponent = require('encodeUriComponent');
-const readAnalyticsStorage = require('readAnalyticsStorage'); 
+const readAnalyticsStorage = require('readAnalyticsStorage');
+const isConsentGranted = require('isConsentGranted');
+const makeNumber = require('makeNumber');
 
 let pageLocation = getUrl();
 
@@ -303,8 +325,20 @@ if (
 }
 
 const cookieName = 'lt_channelflow';
+const sessionCookieName = 'lt_session';
 const maxAgeSeconds = 395 * 86400;
-const organicSearchEngines = ['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'baidu.com'];
+const defaultTimeoutMinutes = 30;
+
+// A Channel Flow entry marks the start of a session, so the array only grows
+// for returning visitors. Both limits guard the 4KB browser cookie limit: past
+// it the cookie is silently rejected and the whole journey is lost.
+const maxEntries = 25;
+const maxCookieLength = 3500;
+
+const searchEngineLabels = ['google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'ecosia', 'yandex', 'startpage', 'qwant', 'brave', 'naver'];
+const secondLevelDomains = ['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'mil'];
+const googleClickIds = ['gclid', 'gbraid', 'wbraid'];
+const consentTypes = ['ad_storage', 'analytics_storage', 'ad_user_data', 'ad_personalization'];
 
 function getSubDomainIndex() {
   const hostname = getUrl('hostname');
@@ -317,125 +351,267 @@ function getSubDomainIndex() {
   return 1;
 }
 
-function getDomainFromHost(host) {
-  if (!host) return null;
+// Returns the registrable part of a host: www.google.nl -> google.nl,
+// www.google.co.uk -> google.co.uk. Matching on this instead of the full host
+// is what makes every country domain resolve to the same search engine.
+function registrableDomain(host) {
+  if (!host) return '';
   const parts = host.split('.');
-  if (parts.length >= 2) {
-    return parts[parts.length - 2]; 
-  }
-  return host;
-}
+  if (parts.length <= 2) return host;
 
-function getChannelData() {
-  const utmMapping = {
-    source: data.sourceParam || 'utm_source',
-    medium: data.mediumParam || 'utm_medium',
-    campaign: data.campaignParam || 'utm_campaign',
-    content: data.contentParam || 'utm_content',
-    term: data.termParam || 'utm_term',
-  };
-  const utm = {
-    source: getQueryParameters(utmMapping.source) || '',
-    medium: getQueryParameters(utmMapping.medium) || '',
-    campaign: getQueryParameters(utmMapping.campaign) || '',
-    content: getQueryParameters(utmMapping.content) || '',
-    term: getQueryParameters(utmMapping.term) || '',
-  };
-    
-  let referrerHost = null;
-  if (queryPermission('get_referrer', 'host')) {
-    referrerHost = getReferrerUrl('host');
-  }
-  let currentHost = null;
-  if (queryPermission('get_url', 'host')) {
-    currentHost = getUrl('host');
-  }
-
-  let hasAnyUtm = false;
-  for (const key in utm) {
-    if (utm[key]) {
-      hasAnyUtm = true;
+  let take = 2;
+  const secondLast = parts[parts.length - 2];
+  for (const sld of secondLevelDomains) {
+    if (secondLast === sld) {
+      take = 3;
       break;
     }
   }
+  if (parts.length <= take) return host;
+  return parts.slice(parts.length - take).join('.');
+}
 
-  if (hasAnyUtm) return utm;
-  if (referrerHost) {
-    for (const engine of organicSearchEngines) {
-      if (referrerHost.indexOf(engine) > -1) {
-        return {
-          source: getDomainFromHost(referrerHost) || '(not set)',
-          medium: 'organic'
-        };
-      }
-    }
-    if (currentHost && referrerHost !== currentHost) {
-      return {
-        source: referrerHost || '(not set)',
-        medium: 'referral'
-      };
+function domainLabel(host) {
+  const registrable = registrableDomain(host);
+  if (!registrable) return '';
+  return registrable.split('.')[0];
+}
+
+function getUtmMapping() {
+  return {
+    s: data.sourceParam || 'utm_source',
+    m: data.mediumParam || 'utm_medium',
+    cm: data.campaignParam || 'utm_campaign',
+    ct: data.contentParam || 'utm_content',
+    tm: data.termParam || 'utm_term',
+  };
+}
+
+function getUtmChannel() {
+  const mapping = getUtmMapping();
+  const channel = {};
+  let hasAny = false;
+
+  for (const key in mapping) {
+    const value = getQueryParameters(mapping[key]);
+    if (value) {
+      channel[key] = value;
+      hasAny = true;
     }
   }
+  if (!hasAny) return null;
 
-  return {
-    source: 'direct',
-    medium: 'none'
-  };
+  if (!channel.s) channel.s = '(not set)';
+  if (!channel.m) channel.m = '(not set)';
+  return channel;
+}
+
+// Click IDs count only when present in this pageview's query string. Reading
+// them from _gcl_aw would mark every later visit as paid for 90 days.
+function getClickIdChannel() {
+  for (const param of googleClickIds) {
+    if (getQueryParameters(param)) {
+      return { s: 'google', m: 'cpc' };
+    }
+  }
+  if (getQueryParameters('msclkid')) {
+    return { s: 'bing', m: 'cpc' };
+  }
+  return null;
+}
+
+function getReferrerHost() {
+  if (!queryPermission('get_referrer', 'host')) return null;
+  return getReferrerUrl('host');
+}
+
+function getCurrentHost() {
+  if (!queryPermission('get_url', 'host')) return null;
+  return getUrl('host');
+}
+
+// An empty referrer is not internal: a real ad click can arrive without one.
+function isInternalReferrer() {
+  const referrerHost = getReferrerHost();
+  if (!referrerHost) return false;
+  return registrableDomain(referrerHost) === registrableDomain(getCurrentHost());
+}
+
+function resolveChannel(utmChannel, clickIdChannel) {
+  if (utmChannel) return utmChannel;
+  if (clickIdChannel) return clickIdChannel;
+
+  const referrerHost = getReferrerHost();
+
+  // Compared on domain level so a hop between subdomains stays internal.
+  if (referrerHost && registrableDomain(referrerHost) !== registrableDomain(getCurrentHost())) {
+    const label = domainLabel(referrerHost);
+    for (const engine of searchEngineLabels) {
+      if (label === engine) {
+        return { s: label, m: 'organic' };
+      }
+    }
+    return { s: referrerHost, m: 'referral' };
+  }
+
+  return { s: 'direct', m: 'none' };
+}
+
+function sameChannel(a, b) {
+  if (!a || !b) return false;
+  const keys = ['s', 'm', 'cm', 'ct', 'tm'];
+  for (const key of keys) {
+    if ((a[key] || '') !== (b[key] || '')) return false;
+  }
+  return true;
+}
+
+function getLandingPath() {
+  if (!queryPermission('get_url', 'path')) return '';
+  const path = getUrl('path') || '';
+  if (path.length > 100) return path.substring(0, 100);
+  return path;
+}
+
+// Accepts both the compact format and the original one still living in
+// cookies out in the field, so existing journeys survive the upgrade.
+function toCompactEntry(entry) {
+  if (!entry) return null;
+  if (entry.t && entry.ch) return entry;
+
+  if (entry.timestamp && entry.channel) {
+    const legacy = entry.channel;
+    const channel = {};
+    if (legacy.source) channel.s = legacy.source;
+    if (legacy.medium) channel.m = legacy.medium;
+    if (legacy.campaign) channel.cm = legacy.campaign;
+    if (legacy.content) channel.ct = legacy.content;
+    if (legacy.term) channel.tm = legacy.term;
+    return { t: entry.timestamp, ch: channel };
+  }
+  return null;
+}
+
+function readChannelFlow() {
+  const existingCookie = getCookieValues(cookieName);
+  const cookieValue = (existingCookie && existingCookie.length > 0) ? existingCookie[0] : null;
+  if (!cookieValue || cookieValue.charAt(0) !== '[') return [];
+
+  const parsedCookie = JSON.parse(cookieValue);
+  if (!parsedCookie) {
+    if (data.isDebug) {
+      logToConsole('LeadTrackr: invalid JSON in lt_channelflow, starting a new channel flow.');
+    }
+    return [];
+  }
+
+  const flow = [];
+  for (const entry of parsedCookie) {
+    const compact = toCompactEntry(entry);
+    if (compact) flow.push(compact);
+  }
+  return flow;
+}
+
+// Always drops the second entry, never the first: the first touch is what
+// makes first-touch attribution possible.
+function applyLimits(flow) {
+  while (flow.length > maxEntries && flow.length > 1) {
+    flow.splice(1, 1);
+  }
+  // The cookie is stored URL encoded, so that is the length that counts.
+  while (flow.length > 1 && encodeUriComponent(JSON.stringify(flow)).length > maxCookieLength) {
+    flow.splice(1, 1);
+  }
+  return flow;
+}
+
+function getSessionTimeoutSeconds() {
+  let minutes = defaultTimeoutMinutes;
+  if (data.sessionTimeoutMinutes) {
+    const parsed = makeNumber(data.sessionTimeoutMinutes);
+    if (parsed && parsed > 0) minutes = parsed;
+  }
+  return minutes * 60;
 }
 
 function updateChannelFlow() {
-  const existingCookie = getCookieValues(cookieName);
-  let channelFlow = [];
-  const cookieValue = (existingCookie && existingCookie.length > 0) ? existingCookie[0] : null;
+  const flow = readChannelFlow();
+  const sessionCookie = getCookieValues(sessionCookieName);
+  const sessionActive = !!(sessionCookie && sessionCookie.length > 0);
 
-  if (cookieValue && cookieValue.charAt(0) === '[') {
-    const parsedCookie = JSON.parse(cookieValue);
-    if (parsedCookie) {
-      channelFlow = parsedCookie;
-    } else if (data.isDebug) {
-      logToConsole('Ongeldige JSON in de ChannelFlow cookie. De cookie zal opnieuw worden gezet.');
-    }
+  // A click ID behind an internal referrer was carried over, not clicked:
+  // consent mode's url_passthrough appends it to every internal link once
+  // ad_storage is denied. Without this each expired session would record
+  // another paid touchpoint that never happened.
+  const utmChannel = getUtmChannel();
+  const clickIdChannel = isInternalReferrer() ? null : getClickIdChannel();
+
+  const channel = resolveChannel(utmChannel, clickIdChannel);
+  const hasCampaignSignal = !!utmChannel || !!clickIdChannel;
+  const lastEntry = flow.length > 0 ? flow[flow.length - 1] : null;
+
+  let isNewSession = false;
+  if (!lastEntry) {
+    isNewSession = true;
+  } else if (!sessionActive) {
+    isNewSession = true;
+  } else if (hasCampaignSignal && !sameChannel(lastEntry.ch, channel)) {
+    isNewSession = true;
   }
 
-  let currentChannelData;
-  const lastEntry = channelFlow[channelFlow.length - 1];
-    
-  const utmMapping = {
-    source: data.sourceParam || 'utm_source',
-    medium: data.mediumParam || 'utm_medium',
-    campaign: data.campaignParam || 'utm_campaign',
-    content: data.contentParam || 'utm_content',
-    term: data.termParam || 'utm_term',
-  };
-  let hasNewUtmParams = false;
-  for (const key in utmMapping) {
-    if (getQueryParameters(utmMapping[key])) {
-      hasNewUtmParams = true;
-      break;
-    }
-  }
-    
-  if (channelFlow.length > 0 && !hasNewUtmParams) {
-    currentChannelData = lastEntry.channel;
-  } else {
-    currentChannelData = getChannelData();
+  if (isNewSession) {
+    const entry = { t: getTimestamp(), ch: channel };
+    const landingPath = getLandingPath();
+    if (landingPath) entry.lp = landingPath;
+    flow.push(entry);
+    applyLimits(flow);
   }
 
-  const newEntry = {
-    timestamp: getTimestamp(),
-    channel: currentChannelData
-  };
-    
-  const isSameEntry = lastEntry && JSON.stringify(lastEntry.channel) === JSON.stringify(newEntry.channel);
-  if (!isSameEntry) {
-    channelFlow.push(newEntry);
+  if (data.isDebug) {
+    logToConsole('LeadTrackr Channel Flow', {
+      newSession: isNewSession,
+      sessionActive: sessionActive,
+      channel: channel,
+      entries: flow.length
+    });
   }
 
-  setCookie(cookieName, JSON.stringify(channelFlow), {
+  setCookie(cookieName, JSON.stringify(flow), {
     'max-age': maxAgeSeconds,
     path: '/',
     domain: 'auto',
   });
+
+  // Its existence is the session signal; expiry is left to the browser.
+  setCookie(sessionCookieName, '1', {
+    'max-age': getSessionTimeoutSeconds(),
+    path: '/',
+    domain: 'auto',
+  });
+}
+
+function getConversionPage() {
+  let host = '';
+  if (queryPermission('get_url', 'host')) {
+    host = getUrl('host') || '';
+  }
+  let path = '';
+  if (queryPermission('get_url', 'path')) {
+    path = getUrl('path') || '';
+  }
+  return host + path;
+}
+
+// Observational only: the CMP is responsible for blocking, this records what
+// the state was. The API returns a boolean, so an unconfigured consent mode
+// reads as granted.
+function getConsentState() {
+  const state = {};
+  for (const consentType of consentTypes) {
+    state[consentType] = isConsentGranted(consentType) ? 'granted' : 'denied';
+  }
+  return state;
 }
 
 
@@ -485,14 +661,9 @@ function sendLeadData() {
     }
   }
 
-  let channelFlowCookieValue = getCookieValues(cookieName)[0];
-  if (channelFlowCookieValue && channelFlowCookieValue.charAt(0) === '[') {
-    const parsedCookie = JSON.parse(channelFlowCookieValue);
-    if (parsedCookie) {
-      payload.channelFlow = parsedCookie;
-    } else if (data.isDebug) {
-      logToConsole('Ongeldige JSON in de ChannelFlow cookie bij het versturen van lead data.');
-    }
+  const channelFlow = readChannelFlow();
+  if (channelFlow.length > 0) {
+    payload.channelFlow = channelFlow;
   }
 
 
@@ -536,12 +707,17 @@ function sendLeadData() {
   }
 
 
+  // conversionPage and consent ride along inside attributionData: createLead
+  // only destructures known top-level fields, and attributionData is merged
+  // rather than overwritten when a lead is updated.
   payload.attributionData = {
     fbc: fbc,
     fbp: fbp,
     gclid: gclid,
     wbraid: wbraid,
-    cid: cid
+    cid: cid,
+    conversionPage: getConversionPage(),
+    consent: getConsentState()
   };
 
 
@@ -626,6 +802,53 @@ ___WEB_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "lt_channelflow"
+                  },
+                  {
+                    "type": 1,
+                    "string": "*"
+                  },
+                  {
+                    "type": 1,
+                    "string": "*"
+                  },
+                  {
+                    "type": 1,
+                    "string": "any"
+                  },
+                  {
+                    "type": 1,
+                    "string": "any"
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "name"
+                  },
+                  {
+                    "type": 1,
+                    "string": "domain"
+                  },
+                  {
+                    "type": 1,
+                    "string": "path"
+                  },
+                  {
+                    "type": 1,
+                    "string": "secure"
+                  },
+                  {
+                    "type": 1,
+                    "string": "session"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "lt_session"
                   },
                   {
                     "type": 1,
@@ -865,6 +1088,152 @@ ___WEB_PERMISSIONS___
         "versionId": "1"
       },
       "param": []
+    },
+    "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "access_consent",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "consentTypes",
+          "value": {
+            "type": 2,
+            "listItem": [
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "consentType"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "ad_storage"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": false
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "consentType"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "analytics_storage"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": false
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "consentType"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "ad_user_data"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": false
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "consentType"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "ad_personalization"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": false
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
     },
     "isRequired": true
   }
