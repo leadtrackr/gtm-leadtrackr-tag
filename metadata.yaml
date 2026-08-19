@@ -1,6 +1,8 @@
 homepage: "https://leadtrackr.io"
 documentation: "https://reflective-patio-274.notion.site/Setting-up-a-lead-source-with-GTM-26ecd18e75e180f4b80fe8e19ce26211?pvs=74"
 versions:
+  - sha: 6b857734320496c892d5f7fadbec4f5af5f85004
+    changeNotes: "First and last name are now read from a User-Provided Data object that passes address as a plain object instead of an array"
   - sha: 2bf7d14d684ada23acea05715eefd0fb8e71256e
     changeNotes: "Channel Flow now records real sessions instead of channel changes, fixes country domains of search engines being logged as referrals, and attributes auto-tagged campaigns through gclid"
   - sha: 69ce605d4c82f3e864bc7fd69862a39f623e4be3
