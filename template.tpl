@@ -312,6 +312,7 @@ const encodeUriComponent = require('encodeUriComponent');
 const readAnalyticsStorage = require('readAnalyticsStorage');
 const isConsentGranted = require('isConsentGranted');
 const makeNumber = require('makeNumber');
+const getType = require('getType');
 
 let pageLocation = getUrl();
 
@@ -615,6 +616,16 @@ function getConsentState() {
 }
 
 
+// GTM's built in User-Provided Data variable wraps these fields in an array,
+// a hand built dataLayer object passes them as plain values. Both reach this
+// tag, so every read goes through here.
+function firstValue(value) {
+  if (getType(value) === 'array') {
+    return value.length > 0 ? value[0] : null;
+  }
+  return value;
+}
+
 function sendLeadData() {
   const payload = {};
   payload.projectId = data.projectId;
@@ -627,18 +638,21 @@ function sendLeadData() {
 
   payload.userData = {};
   
-  if (data.userProvidedData && typeof data.userProvidedData === 'object') {
+  if (data.userProvidedData && getType(data.userProvidedData) === 'object') {
     const upd = data.userProvidedData;
-    
-    if (upd.email) {
-      payload.userData.email = upd.email;
+
+    const email = firstValue(upd.email);
+    if (email) {
+      payload.userData.email = email;
     }
-    if (upd.phone_number) {
-      payload.userData.phone = upd.phone_number;
+
+    const phone = firstValue(upd.phone_number);
+    if (phone) {
+      payload.userData.phone = phone;
     }
-    
-    if (upd.address && upd.address.length > 0) {
-      const address = upd.address[0];
+
+    const address = firstValue(upd.address);
+    if (address && getType(address) === 'object') {
       if (address.first_name) {
         payload.userData.firstName = address.first_name;
       }
