@@ -721,25 +721,27 @@ function sendLeadData() {
   // taken from stape-io/google-conversion-events-tag. gbraid is the odd one out
   // twice over: it lives in _gcl_ag rather than beside its siblings, and that
   // cookie carries the server-side format even though the browser tag writes it.
-  const googleClickId = (param, serverCookie, browserCookie, browserUsesServerFormat) => {
+  //
+  // Only the browser tag's cookies are read. A server-side container writes the
+  // same IDs to FPGCLAW, FPGCLGB, FPGCLAG and FPGCLDC, but it sets them over
+  // HTTP as HttpOnly, so getCookieValues never sees them. The WordPress plugin
+  // reads those from $_COOKIE instead, where they do arrive.
+  const googleClickId = (param, cookie, usesServerFormat) => {
     const fromUrl = getQueryParameters(param);
     if (fromUrl) return fromUrl;
-    const fromServer = unwrapGcl(getCookieValues(serverCookie)[0], true);
-    if (fromServer) return fromServer;
-    return unwrapGcl(getCookieValues(browserCookie)[0], browserUsesServerFormat);
+    return unwrapGcl(getCookieValues(cookie)[0], usesServerFormat);
   };
 
-  const gclid = googleClickId('gclid', 'FPGCLAW', '_gcl_aw', false);
-  const wbraid = googleClickId('wbraid', 'FPGCLGB', '_gcl_gb', false);
-  const gbraid = googleClickId('gbraid', 'FPGCLAG', '_gcl_ag', true);
+  const gclid = googleClickId('gclid', '_gcl_aw', false);
+  const wbraid = googleClickId('wbraid', '_gcl_gb', false);
+  const gbraid = googleClickId('gbraid', '_gcl_ag', true);
   // Collected but not actionable: Google Ads' ClickConversion takes gclid,
   // gbraid or wbraid only. dclid belongs to Campaign Manager 360 and DV360.
-  const dclid = googleClickId('dclid', 'FPGCLDC', '_gcl_dc', false);
+  const dclid = googleClickId('dclid', '_gcl_dc', false);
 
   // UET's browser pixel writes the cookie's own name into its value, so
-  // '_uet561f11…' has to be sent as '561f11…'. A server-side container writes
-  // the same ID to uet_msclkid without the prefix.
-  let msclkid = firstOf('msclkid', ['uet_msclkid', '_uetmsclkid']);
+  // '_uet561f11…' has to be sent as '561f11…'.
+  let msclkid = firstOf('msclkid', ['_uetmsclkid']);
   if (msclkid.indexOf('_uet') === 0) {
     msclkid = msclkid.substring(4);
   }
@@ -798,7 +800,7 @@ function sendLeadData() {
     scid: firstOf('', ['_scid']),
     rdt_uuid: firstOf('', ['_rdt_uuid']),
     obref: firstOf('', ['__obref']),
-    uetvid: firstOf('', ['uet_vid', '_uetvid']),
+    uetvid: firstOf('', ['_uetvid']),
     cid: cid,
     conversionPage: getConversionPage(),
     consent: getConsentState()
