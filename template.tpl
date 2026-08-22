@@ -681,17 +681,85 @@ function sendLeadData() {
   }
 
 
-  let gclid = getQueryParameters('gclid');
-  let wbraid = getQueryParameters('wbraid');
+  // URL parameter first, then the cookies the platform's own pixel writes: the
+  // parameter is the freshest copy and is there even when the pixel is absent,
+  // blocked by consent, or has not written its cookie yet. Cookies are only
+  // read, never created — an ID we invent is one the platform cannot match, so
+  // an absent cookie stays absent. Browser IDs have no URL parameter for that
+  // same reason, and carry '' below.
+  const clickIdSources = [
+    ['ttclid', 'ttclid', ['ttclid']],
+    ['ttp', '', ['_ttp']],
+    ['li_fat_id', 'li_fat_id', ['li_fat_id']],
+    // Snapchat capitalises its parameter where nobody else does.
+    ['scclid', 'ScCid', ['_scclid']],
+    ['scid', '', ['_scid']],
+    // rdt_cid without the underscore is what Reddit's older pixel wrote.
+    ['rdt_cid', 'rdt_cid', ['_rdt_cid', 'rdt_cid']],
+    ['rdt_uuid', '', ['_rdt_uuid']],
+    ['epik', 'epik', ['_epik']],
+    ['twclid', 'twclid', ['twclid']],
+    // OpenAI's cookies are its parameter with a __ prefix.
+    ['oppref', 'oppref', ['__oppref']],
+    ['obref', '', ['__obref']],
+    ['uetvid', '', ['uet_vid', '_uetvid']]
+  ];
 
-  if (!gclid) {
-    const gclAwCookie = getCookieValues('_gcl_aw')[0];
-    gclid = gclAwCookie ? gclAwCookie.split('.')[2] : '';
-  }
+  const firstOf = (param, cookieNames) => {
+    if (param) {
+      const fromUrl = getQueryParameters(param);
+      if (fromUrl) return fromUrl;
+    }
+    for (let i = 0; i < cookieNames.length; i++) {
+      const value = getCookieValues(cookieNames[i])[0];
+      if (value) return value;
+    }
+    return '';
+  };
 
-  if (!wbraid) {
-    const gclGbCookie = getCookieValues('_gcl_gb')[0];
-    wbraid = gclGbCookie ? gclGbCookie.split('.')[2] : '';
+  // Pulls the ID out of a _gcl container. The browser tag wraps it in a
+  // dot-separated value whose last segment is the ID; a server-side container
+  // wraps it between '.k' and '$i'. No RegExp in the sandbox, so the bounds are
+  // found by hand — first '.k' and last '$i', matching the greedy pattern the
+  // Stape templates use.
+  const unwrapGcl = (value, serverFormat) => {
+    if (!value) return '';
+    if (serverFormat) {
+      const start = value.indexOf('.k');
+      const end = value.lastIndexOf('$i');
+      if (start === -1 || end === -1 || end <= start + 2) return '';
+      return value.substring(start + 2, end);
+    }
+    if (value.indexOf('.') === -1) return '';
+    const parts = value.split('.');
+    return parts[parts.length - 1];
+  };
+
+  // Google documents the cookie names but not which ID each one holds; mapping
+  // taken from stape-io/google-conversion-events-tag. gbraid is the odd one out
+  // twice over: it lives in _gcl_ag rather than beside its siblings, and that
+  // cookie carries the server-side format even though the browser tag writes it.
+  const googleClickId = (param, serverCookie, browserCookie, browserUsesServerFormat) => {
+    const fromUrl = getQueryParameters(param);
+    if (fromUrl) return fromUrl;
+    const fromServer = unwrapGcl(getCookieValues(serverCookie)[0], true);
+    if (fromServer) return fromServer;
+    return unwrapGcl(getCookieValues(browserCookie)[0], browserUsesServerFormat);
+  };
+
+  const gclid = googleClickId('gclid', 'FPGCLAW', '_gcl_aw', false);
+  const wbraid = googleClickId('wbraid', 'FPGCLGB', '_gcl_gb', false);
+  const gbraid = googleClickId('gbraid', 'FPGCLAG', '_gcl_ag', true);
+  // Collected but not actionable: Google Ads' ClickConversion takes gclid,
+  // gbraid or wbraid only. dclid belongs to Campaign Manager 360 and DV360.
+  const dclid = googleClickId('dclid', 'FPGCLDC', '_gcl_dc', false);
+
+  // UET's browser pixel writes the cookie's own name into its value, so
+  // '_uet561f11…' has to be sent as '561f11…'. A server-side container writes
+  // the same ID to uet_msclkid without the prefix.
+  let msclkid = firstOf('msclkid', ['uet_msclkid', '_uetmsclkid']);
+  if (msclkid.indexOf('_uet') === 0) {
+    msclkid = msclkid.substring(4);
   }
 
   let fbc = getCookieValues('_fbc')[0] || '';
@@ -729,10 +797,18 @@ function sendLeadData() {
     fbp: fbp,
     gclid: gclid,
     wbraid: wbraid,
+    gbraid: gbraid,
+    dclid: dclid,
+    msclkid: msclkid,
     cid: cid,
     conversionPage: getConversionPage(),
     consent: getConsentState()
   };
+
+  for (let i = 0; i < clickIdSources.length; i++) {
+    const source = clickIdSources[i];
+    payload.attributionData[source[0]] = firstOf(source[1], source[2]);
+  }
 
 
   injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
