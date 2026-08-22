@@ -687,24 +687,6 @@ function sendLeadData() {
   // read, never created — an ID we invent is one the platform cannot match, so
   // an absent cookie stays absent. Browser IDs have no URL parameter for that
   // same reason, and carry '' below.
-  const clickIdSources = [
-    ['ttclid', 'ttclid', ['ttclid']],
-    ['ttp', '', ['_ttp']],
-    ['li_fat_id', 'li_fat_id', ['li_fat_id']],
-    // Snapchat capitalises its parameter where nobody else does.
-    ['scclid', 'ScCid', ['_scclid']],
-    ['scid', '', ['_scid']],
-    // rdt_cid without the underscore is what Reddit's older pixel wrote.
-    ['rdt_cid', 'rdt_cid', ['_rdt_cid', 'rdt_cid']],
-    ['rdt_uuid', '', ['_rdt_uuid']],
-    ['epik', 'epik', ['_epik']],
-    ['twclid', 'twclid', ['twclid']],
-    // OpenAI's cookies are its parameter with a __ prefix.
-    ['oppref', 'oppref', ['__oppref']],
-    ['obref', '', ['__obref']],
-    ['uetvid', '', ['uet_vid', '_uetvid']]
-  ];
-
   const firstOf = (param, cookieNames) => {
     if (param) {
       const fromUrl = getQueryParameters(param);
@@ -800,15 +782,27 @@ function sendLeadData() {
     gbraid: gbraid,
     dclid: dclid,
     msclkid: msclkid,
+    ttclid: firstOf('ttclid', ['ttclid']),
+    li_fat_id: firstOf('li_fat_id', ['li_fat_id']),
+    // Snapchat capitalises its parameter where nobody else does.
+    scclid: firstOf('ScCid', ['_scclid']),
+    // rdt_cid without the underscore is what Reddit's older pixel wrote.
+    rdt_cid: firstOf('rdt_cid', ['_rdt_cid', 'rdt_cid']),
+    epik: firstOf('epik', ['_epik']),
+    twclid: firstOf('twclid', ['twclid']),
+    // OpenAI's cookies are its parameter with a __ prefix.
+    oppref: firstOf('oppref', ['__oppref']),
+    // Browser IDs: no URL parameter exists, they are only ever something the
+    // platform's own pixel created.
+    ttp: firstOf('', ['_ttp']),
+    scid: firstOf('', ['_scid']),
+    rdt_uuid: firstOf('', ['_rdt_uuid']),
+    obref: firstOf('', ['__obref']),
+    uetvid: firstOf('', ['uet_vid', '_uetvid']),
     cid: cid,
     conversionPage: getConversionPage(),
     consent: getConsentState()
   };
-
-  for (let i = 0; i < clickIdSources.length; i++) {
-    const source = clickIdSources[i];
-    payload.attributionData[source[0]] = firstOf(source[1], source[2]);
-  }
 
 
   injectScript('https://cdn.jsdelivr.net/gh/leadtrackr/gtm-leadtrackr-tag@main/leadtrackr-sdk.js', () => {
