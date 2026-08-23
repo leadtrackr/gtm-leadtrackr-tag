@@ -681,17 +681,69 @@ function sendLeadData() {
   }
 
 
-  let gclid = getQueryParameters('gclid');
-  let wbraid = getQueryParameters('wbraid');
+  // URL parameter first, then the cookies the platform's own pixel writes: the
+  // parameter is the freshest copy and is there even when the pixel is absent,
+  // blocked by consent, or has not written its cookie yet. Cookies are only
+  // read, never created — an ID we invent is one the platform cannot match, so
+  // an absent cookie stays absent. Browser IDs have no URL parameter for that
+  // same reason, and carry '' below.
+  const firstOf = (param, cookieNames) => {
+    if (param) {
+      const fromUrl = getQueryParameters(param);
+      if (fromUrl) return fromUrl;
+    }
+    for (let i = 0; i < cookieNames.length; i++) {
+      const value = getCookieValues(cookieNames[i])[0];
+      if (value) return value;
+    }
+    return '';
+  };
 
-  if (!gclid) {
-    const gclAwCookie = getCookieValues('_gcl_aw')[0];
-    gclid = gclAwCookie ? gclAwCookie.split('.')[2] : '';
-  }
+  // Pulls the ID out of a _gcl container. The browser tag wraps it in a
+  // dot-separated value whose last segment is the ID; a server-side container
+  // wraps it between '.k' and '$i'. No RegExp in the sandbox, so the bounds are
+  // found by hand — first '.k' and last '$i', matching the greedy pattern the
+  // Stape templates use.
+  const unwrapGcl = (value, serverFormat) => {
+    if (!value) return '';
+    if (serverFormat) {
+      const start = value.indexOf('.k');
+      const end = value.lastIndexOf('$i');
+      if (start === -1 || end === -1 || end <= start + 2) return '';
+      return value.substring(start + 2, end);
+    }
+    if (value.indexOf('.') === -1) return '';
+    const parts = value.split('.');
+    return parts[parts.length - 1];
+  };
 
-  if (!wbraid) {
-    const gclGbCookie = getCookieValues('_gcl_gb')[0];
-    wbraid = gclGbCookie ? gclGbCookie.split('.')[2] : '';
+  // Google documents the cookie names but not which ID each one holds; mapping
+  // taken from stape-io/google-conversion-events-tag. gbraid is the odd one out
+  // twice over: it lives in _gcl_ag rather than beside its siblings, and that
+  // cookie carries the server-side format even though the browser tag writes it.
+  //
+  // Only the browser tag's cookies are read. A server-side container writes the
+  // same IDs to FPGCLAW, FPGCLGB, FPGCLAG and FPGCLDC, but it sets them over
+  // HTTP as HttpOnly, so getCookieValues never sees them. The WordPress plugin
+  // reads those from $_COOKIE instead, where they do arrive.
+  const googleClickId = (param, cookie, usesServerFormat) => {
+    const fromUrl = getQueryParameters(param);
+    if (fromUrl) return fromUrl;
+    return unwrapGcl(getCookieValues(cookie)[0], usesServerFormat);
+  };
+
+  const gclid = googleClickId('gclid', '_gcl_aw', false);
+  const wbraid = googleClickId('wbraid', '_gcl_gb', false);
+  const gbraid = googleClickId('gbraid', '_gcl_ag', true);
+  // Collected but not actionable: Google Ads' ClickConversion takes gclid,
+  // gbraid or wbraid only. dclid belongs to Campaign Manager 360 and DV360.
+  const dclid = googleClickId('dclid', '_gcl_dc', false);
+
+  // UET's browser pixel writes the cookie's own name into its value, so
+  // '_uet561f11…' has to be sent as '561f11…'.
+  let msclkid = firstOf('msclkid', ['_uetmsclkid']);
+  if (msclkid.indexOf('_uet') === 0) {
+    msclkid = msclkid.substring(4);
   }
 
   let fbc = getCookieValues('_fbc')[0] || '';
@@ -729,6 +781,26 @@ function sendLeadData() {
     fbp: fbp,
     gclid: gclid,
     wbraid: wbraid,
+    gbraid: gbraid,
+    dclid: dclid,
+    msclkid: msclkid,
+    ttclid: firstOf('ttclid', ['ttclid']),
+    li_fat_id: firstOf('li_fat_id', ['li_fat_id']),
+    // Snapchat capitalises its parameter where nobody else does.
+    scclid: firstOf('ScCid', ['_scclid']),
+    // rdt_cid without the underscore is what Reddit's older pixel wrote.
+    rdt_cid: firstOf('rdt_cid', ['_rdt_cid', 'rdt_cid']),
+    epik: firstOf('epik', ['_epik']),
+    twclid: firstOf('twclid', ['twclid']),
+    // OpenAI's cookies are its parameter with a __ prefix.
+    oppref: firstOf('oppref', ['__oppref']),
+    // Browser IDs: no URL parameter exists, they are only ever something the
+    // platform's own pixel created.
+    ttp: firstOf('', ['_ttp']),
+    scid: firstOf('', ['_scid']),
+    rdt_uuid: firstOf('', ['_rdt_uuid']),
+    obref: firstOf('', ['__obref']),
+    uetvid: firstOf('', ['_uetvid']),
     cid: cid,
     conversionPage: getConversionPage(),
     consent: getConsentState()
