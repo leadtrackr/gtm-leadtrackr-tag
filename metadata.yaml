@@ -1,6 +1,8 @@
 homepage: "https://leadtrackr.io"
 documentation: "https://reflective-patio-274.notion.site/Setting-up-a-lead-source-with-GTM-26ecd18e75e180f4b80fe8e19ce26211?pvs=74"
 versions:
+  - sha: bcb3ae83c72758d4b841bfa31394a2053517cfa6
+    changeNotes: "Leads now carry a click ID for every ad channel: TikTok, LinkedIn, Snapchat, Reddit, Pinterest, X, OpenAI and Microsoft, plus Google's gbraid and dclid. Read from the URL parameter first and the platform's own cookie second."
   - sha: 6b857734320496c892d5f7fadbec4f5af5f85004
     changeNotes: "First and last name are now read from a User-Provided Data object that passes address as a plain object instead of an array"
   - sha: 2bf7d14d684ada23acea05715eefd0fb8e71256e
