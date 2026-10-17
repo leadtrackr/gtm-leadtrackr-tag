@@ -14,6 +14,15 @@
    * @param {function} onFailure - Callback function for failure.
    */
   window.leadtrackrSDK.trackLead = function(payloadString, onSuccess, onFailure) {
+    // Google's renderer loads containers to inspect them and fires lead tags
+    // along the way. The template has this check too, but only since February
+    // 2026; checking here also covers every older template, since all of them
+    // load this file.
+    if (window.location && window.location.hostname === 'gtm-msr.appspot.com') {
+      if (typeof onSuccess === 'function') onSuccess();
+      return;
+    }
+
     var endpoint = 'https://app.leadtrackr.io/api/leads/createLead';
     var headers = {
       'Content-Type': 'application/json'
